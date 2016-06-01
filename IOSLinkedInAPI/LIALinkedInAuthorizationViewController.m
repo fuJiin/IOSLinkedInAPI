@@ -28,8 +28,7 @@ NSString *kLinkedInErrorDomain = @"LIALinkedInERROR";
 NSString *kLinkedInDeniedByUser = @"the+user+denied+your+request";
 
 @interface LIALinkedInAuthorizationViewController ()
-@property(nonatomic, weak) IBOutlet UIWebView *authenticationWebView;
-@property(nonatomic, weak) IBOutlet UILabel *loadingLabel;
+@property(nonatomic, strong) UIWebView *authenticationWebView;
 @property(nonatomic, copy) LIAAuthorizationCodeFailureCallback failureCallback;
 @property(nonatomic, copy) LIAAuthorizationCodeSuccessCallback successCallback;
 @property(nonatomic, copy) LIAAuthorizationCodeCancelCallback cancelCallback;
@@ -40,7 +39,6 @@ NSString *kLinkedInDeniedByUser = @"the+user+denied+your+request";
 
 @end
 
-//todo: handle no network
 @implementation LIALinkedInAuthorizationViewController
 
 BOOL handlingRedirectURL;
@@ -63,33 +61,33 @@ BOOL handlingRedirectURL;
 		
 		self.edgesForExtendedLayout = UIRectEdgeNone;
 	}
-	
-	self.view = [[[NSBundle mainBundle] loadNibNamed:@"LIALinkedInAuthorization" owner:self options:nil] objectAtIndex:0];
-	
+
 	UIBarButtonItem *cancelButton = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel target:self action:@selector(tappedCancelButton:)];
 	self.navigationItem.leftBarButtonItem = cancelButton;
-	
-	self.authenticationWebView.scalesPageToFit = YES;
-	
+
+  self.authenticationWebView = [[UIWebView alloc] init];
+  self.authenticationWebView.delegate = self;
+  self.authenticationWebView.scalesPageToFit = YES;
+  [self.view addSubview:self.authenticationWebView];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
     NSString *linkedIn = [NSString stringWithFormat:@"https://www.linkedin.com/uas/oauth2/authorization?response_type=code&client_id=%@&scope=%@&state=%@&redirect_uri=%@", self.application.clientId, self.application.grantedAccessString, self.application.state, [self.application.redirectURL LIAEncode]];
     [self.authenticationWebView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:linkedIn]]];
+    [[UIApplication sharedApplication] setNetworkActivityIndicatorVisible:YES];
 }
+
+- (void)viewWillLayoutSubviews {
+  [super viewWillLayoutSubviews];
+  self.authenticationWebView.frame = self.view.bounds;
+}
+
 
 #pragma mark UI Action Methods
 
 - (void)tappedCancelButton:(id)sender {
-	
-	[self dismissViewControllerAnimated:YES completion:nil];
   self.cancelCallback();
-}
-
-- (IBAction)tappedRefreshButton:(id)sender {
-	
-	[self.loadingLabel setAlpha:1.0];
-	[self.authenticationWebView reload];
 }
 
 @end
@@ -108,13 +106,17 @@ BOOL handlingRedirectURL;
             if (accessDenied) {
                 self.cancelCallback();
             } else {
-                NSError *error = [[NSError alloc] initWithDomain:kLinkedInErrorDomain code:1 userInfo:[[NSMutableDictionary alloc] init]];
+                NSString* errorDescription = [self extractGetParameter:@"error_description" fromURLString:url];
+                NSError *error = [[NSError alloc] initWithDomain:kLinkedInErrorDomain
+                                                            code:1
+                                                        userInfo:@{
+                                                                   NSLocalizedDescriptionKey: errorDescription}];
                 self.failureCallback(error);
             }
         } else {
             NSString *receivedState = [self extractGetParameter:@"state" fromURLString: url];
             //assert that the state is as we expected it to be
-            if ([self.application.state isEqualToString:receivedState]) {
+            if ([receivedState containsString:self.application.state]) {
                 //extract the code from the url
                 NSString *authorizationCode = [self extractGetParameter:@"code" fromURLString: url];
                 self.successCallback(authorizationCode);
@@ -140,13 +142,19 @@ BOOL handlingRedirectURL;
 }
 
 - (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error {
+
+    // Turn off network activity indicator upon failure to load web view
+    [[UIApplication sharedApplication] setNetworkActivityIndicatorVisible:NO];
+
     if (!handlingRedirectURL)
         self.failureCallback(error);
 }
 
 - (void)webViewDidFinishLoad:(UIWebView *)webView {
-	
-	
+
+    // Turn off network activity indicator upon finishing web view load
+	[[UIApplication sharedApplication] setNetworkActivityIndicatorVisible:NO];
+
 	/*fix for the LinkedIn Auth window - it doesn't scale right when placed into
 	 a webview inside of a form sheet modal. If we transform the HTML of the page
 	 a bit, and fix the viewport to 540px (the width of the form sheet), the problem
@@ -161,11 +169,6 @@ BOOL handlingRedirectURL;
 		
 		[webView stringByEvaluatingJavaScriptFromString: js];
 	}
-	
-	[UIView beginAnimations:nil context:NULL];
-	[UIView setAnimationDuration:1.0];
-	[self.loadingLabel setAlpha:0];
-	[UIView commitAnimations];
 }
 
 @end
